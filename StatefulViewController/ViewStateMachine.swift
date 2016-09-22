@@ -34,19 +34,19 @@ public func == (lhs: ViewStateMachineState, rhs: ViewStateMachineState) -> Bool 
 public class ViewStateMachine {
     private var viewStore: [String: UIView]
     private let queue = dispatch_queue_create("com.aschuch.viewStateMachine.queue", DISPATCH_QUEUE_SERIAL)
-    
+
     /// The view that should act as the superview for any added views
     public let view: UIView
-    
+
     /// The current display state of views
     public private(set) var currentState: ViewStateMachineState = .None
-    
+
     /// The last state that was enqueued
     public private(set) var lastState: ViewStateMachineState = .None
-    
-    
+
+
     // MARK: Init
-    
+
     ///  Designated initializer.
     ///
     /// - parameter view:		The view that should act as the superview for any added views
@@ -58,7 +58,7 @@ public class ViewStateMachine {
         self.view = view
         viewStore = states ?? [String: UIView]()
     }
-    
+
     /// - parameter view:		The view that should act as the superview for any added views
     ///
     /// - returns:			A view state machine
@@ -66,28 +66,28 @@ public class ViewStateMachine {
     public convenience init(view: UIView) {
         self.init(view: view, states: nil)
     }
-    
-    
+
+
     // MARK: Add and remove view states
-    
+
     /// - returns: the view for a given state
     public func viewForState(state: String) -> UIView? {
         return viewStore[state]
     }
-    
+
     /// Associates a view for the given state
     public func addView(view: UIView, forState state: String) {
         viewStore[state] = view
     }
-    
+
     ///  Removes the view for the given state
     public func removeViewForState(state: String) {
         viewStore[state] = nil
     }
-    
-    
+
+
     // MARK: Subscripting
-    
+
     public subscript(state: String) -> UIView? {
         get {
             return viewForState(state)
@@ -100,10 +100,10 @@ public class ViewStateMachine {
             }
         }
     }
-    
-    
+
+
     // MARK: Switch view state
-    
+
     /// Adds and removes views to and from the `view` based on the given state.
     /// Animations are synchronized in order to make sure that there aren't any animation gliches in the UI
     ///
@@ -113,21 +113,21 @@ public class ViewStateMachine {
     ///
     public func transitionToState(state: ViewStateMachineState, animated: Bool = true, completion: (() -> ())? = nil) {
         lastState = state
-        
+
         dispatch_async(queue) {
             if state == self.currentState {
                 return
             }
-            
+
             // Suspend the queue, it will be resumed in the completion block
             dispatch_suspend(self.queue)
             self.currentState = state
-            
+
             let c: () -> () = {
                 dispatch_resume(self.queue)
                 completion?()
             }
-            
+
             // Switch state and update the view
             dispatch_sync(dispatch_get_main_queue()) {
                 switch state {
@@ -139,10 +139,10 @@ public class ViewStateMachine {
             }
         }
     }
-    
-    
+
+
     // MARK: Private view updates
-    
+
     private func showViewWithKey(state: String, animated: Bool, completion: (() -> ())? = nil) {
         if let newView = self.viewStore[state] {
             // Add new view using AutoLayout
@@ -159,44 +159,44 @@ public class ViewStateMachine {
             self.view.addConstraints(hConstraints)
             self.view.addConstraints(vConstraints)
         }
-        
+
         let animations: () -> () = {
             if let newView = self.viewStore[state] {
                 newView.alpha = 1.0
             }
         }
-        
+
         let animationCompletion: (Bool) -> () = { (finished) in
             for (key, view) in self.viewStore {
                 if !(key == state) {
                     view.removeFromSuperview()
                 }
             }
-            
+
             completion?()
         }
-        
+
         animateChanges(animated: animated, animations: animations, animationCompletion: animationCompletion)
     }
-    
+
     private func hideAllViews(animated animated: Bool, completion: (() -> ())? = nil) {
         let animations: () -> () = {
             for (_, view) in self.viewStore {
                 view.alpha = 0.0
             }
         }
-        
+
         let animationCompletion: (Bool) -> () = { (finished) in
             for (_, view) in self.viewStore {
                 view.removeFromSuperview()
             }
-            
+
             completion?()
         }
-        
+
         animateChanges(animated: animated, animations: animations, animationCompletion: animationCompletion)
     }
-    
+
     private func animateChanges(animated animated: Bool, animations: () -> (), animationCompletion: (Bool) -> ()) {
         if animated {
             UIView.animateWithDuration(0.3, animations: animations, completion: animationCompletion)
@@ -205,3 +205,53 @@ public class ViewStateMachine {
         }
     }
 }
+
+
+///
+/// A state machine that manages a set of views by adding the state's view to a managed container view.
+///
+/// There are two possible states:
+///		* Show a specific placeholder view, represented by a key
+///		* Hide all managed views
+///
+public class ContainerViewStateMachine: ViewStateMachine {
+    private let containerSuperview: UIView
+
+    public override init(view: UIView, states: [String : UIView]?) {
+        self.containerSuperview = view
+
+        let containerView = StateViewContainerView(frame: self.containerSuperview.frame)
+        containerView.autoresizingMask = [.FlexibleWidth, .FlexibleHeight]
+        containerView.backgroundColor = UIColor.clearColor()
+        containerView.layer.zPosition = self.containerSuperview.layer.zPosition + 1.0
+
+        super.init(view: containerView, states: states)
+    }
+
+    private override func showViewWithKey(state: String, animated: Bool, completion: (() -> ())?) {
+        self.view.frame = self.containerSuperview.frame
+        self.containerSuperview.addSubview(self.view)
+
+        super.showViewWithKey(state, animated: animated, completion: completion)
+    }
+
+    private override func hideAllViews(animated animated: Bool, completion: (() -> ())?) {
+        super.hideAllViews(animated: animated) {
+            completion?()
+            self.view.removeFromSuperview()
+        }
+    }
+}
+
+private class StateViewContainerView: UIView {
+    private override func pointInside(point: CGPoint, withEvent event: UIEvent?) -> Bool {
+        for view in self.subviews {
+            if !view.hidden && view.alpha > 0 && view.userInteractionEnabled &&
+                view.pointInside(self.convertPoint(point, toView:view), withEvent:event) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
